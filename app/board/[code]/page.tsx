@@ -112,6 +112,12 @@ function BoardContent() {
           </div>
 
           <div className="flex items-center gap-4">
+            <Link
+                          href="/"
+                          className="px-4 py-2 rounded-xl border border-slate-700 bg-slate-900 hover:bg-slate-800 text-sm font-medium transition"
+                        >
+                          ← Главная
+                        </Link>
             <div className="px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm">
               Вопрос{" "}
               <span className="font-bold text-indigo-400">

@@ -72,6 +72,12 @@ function ReportContent() {
         </div>
         <div className="flex gap-2">
           <Link
+                      href="/"
+                      className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm font-medium hover:bg-slate-100"
+                    >
+                      ← Главная
+                    </Link>
+          <Link
             href={`/board/${report.code}`}
             className="px-3.5 py-2 rounded-xl border border-slate-300 bg-white text-sm font-medium hover:bg-slate-100"
           >
