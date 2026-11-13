@@ -363,6 +363,12 @@ export default function HomePage() {
             >
               Классы
             </button>
+            <Link
+                href="/cards"
+                className="px-3.5 py-1.5 rounded-lg font-medium text-slate-600 hover:text-slate-900 transition"
+                >
+                  Карточки
+            </Link>
           </nav>
 
           <div className="text-sm">

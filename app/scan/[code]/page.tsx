@@ -14,6 +14,10 @@ declare global {
           corners: Array<{ x: number; y: number }>;
         }>;
       };
+      Dictionary?: new (name: string) => {
+        codeList: string[];
+        generateSVG: (id: number) => string;
+      };
     };
   }
 }
