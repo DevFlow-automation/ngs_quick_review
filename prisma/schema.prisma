@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+}
+
+enum AnswerOption {
+  A
+  B
+  C
+  D
+}
+
+enum SessionStatus {
+  ACTIVE
+  FINISHED
+}
+
+model Class {
+  id        String    @id @default(cuid())
+  name      String    // Например: "8-А"
+  createdAt DateTime  @default(now())
+  students  Student[]
+  sessions  Session[]
+}
+
+model Student {
+  id        String     @id @default(cuid())
+  fullName  String
+  markerId  Int        // Номер ArUco-карточки (1..60), переиспользуется между классами
+  classId   String
+  class     Class      @relation(fields: [classId], references: [id], onDelete: Cascade)
+  responses Response[]
+
+  @@unique([classId, markerId])
+  @@index([classId])
+}
+
+model Quiz {
+  id        String     @id @default(cuid())
+  title     String     // Например: "Квадратные уравнения"
+  subject   String?    // Например: "Алгебра"
+  createdAt DateTime   @default(now())
+  questions Question[]
+  sessions  Session[]
+}
+
+model Question {
+  id            String       @id @default(cuid())
+  quizId        String
+  quiz          Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  order         Int          // Порядковый номер вопроса (1, 2, 3...)
+  text          String
+  optionA       String
+  optionB       String
+  optionC       String
+  optionD       String
+  correctOption AnswerOption
+  responses     Response[]
+
+  @@index([quizId, order])
+}
+
+model Session {
+  id                 String        @id @default(cuid())
+  code               String        @unique // Короткий код для доски, например "8A-42"
+  classId            String
+  class              Class         @relation(fields: [classId], references: [id], onDelete: Cascade)
+  quizId             String
+  quiz               Quiz          @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  currentQuestionIdx Int           @default(0)
+  revealAnswer       Boolean       @default(false) // Показывать ли правильный ответ на доске
+  status             SessionStatus @default(ACTIVE)
+  createdAt          DateTime      @default(now())
+  responses          Response[]
+
+  @@index([status])
+}
+
+model Response {
+  id         String       @id @default(cuid())
+  sessionId  String
+  session    Session      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  questionId String
+  question   Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  answer     AnswerOption
+  isCorrect  Boolean
+  scannedAt  DateTime     @updatedAt
+
+  // Защита от дублей при повторном попадании карточки в кадр
+  @@unique([sessionId, questionId, studentId])
+  @@index([sessionId, questionId])
+}
