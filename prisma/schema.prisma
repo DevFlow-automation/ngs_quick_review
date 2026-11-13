@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
+  provider = "postgresql"
 }
 
 enum AnswerOption {
@@ -18,9 +18,25 @@ enum SessionStatus {
   FINISHED
 }
 
+enum TeacherRole {
+  TEACHER
+  ADMIN
+}
+
+model Teacher {
+  id        String      @id @default(cuid())
+  fullName  String
+  subject   String
+  pinCode   String      // 4-значный PIN для быстрого входа
+  role      TeacherRole @default(TEACHER)
+  createdAt DateTime    @default(now())
+  quizzes   Quiz[]
+  sessions  Session[]
+}
+
 model Class {
   id        String    @id @default(cuid())
-  name      String    // Например: "8-А"
+  name      String    @unique
   createdAt DateTime  @default(now())
   students  Student[]
   sessions  Session[]
@@ -29,7 +45,7 @@ model Class {
 model Student {
   id        String     @id @default(cuid())
   fullName  String
-  markerId  Int        // Номер ArUco-карточки (1..60), переиспользуется между классами
+  markerId  Int
   classId   String
   class     Class      @relation(fields: [classId], references: [id], onDelete: Cascade)
   responses Response[]
@@ -40,18 +56,23 @@ model Student {
 
 model Quiz {
   id        String     @id @default(cuid())
-  title     String     // Например: "Квадратные уравнения"
-  subject   String?    // Например: "Алгебра"
+  title     String
+  subject   String?
+  isShared  Boolean    @default(false) // Доступен ли тест другим учителям
+  teacherId String?
+  teacher   Teacher?   @relation(fields: [teacherId], references: [id], onDelete: SetNull)
   createdAt DateTime   @default(now())
   questions Question[]
   sessions  Session[]
+
+  @@index([teacherId])
 }
 
 model Question {
   id            String       @id @default(cuid())
   quizId        String
   quiz          Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
-  order         Int          // Порядковый номер вопроса (1, 2, 3...)
+  order         Int
   text          String
   optionA       String
   optionB       String
@@ -65,18 +86,21 @@ model Question {
 
 model Session {
   id                 String        @id @default(cuid())
-  code               String        @unique // Короткий код для доски, например "8A-42"
+  code               String        @unique
   classId            String
   class              Class         @relation(fields: [classId], references: [id], onDelete: Cascade)
   quizId             String
   quiz               Quiz          @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  teacherId          String?
+  teacher            Teacher?      @relation(fields: [teacherId], references: [id], onDelete: SetNull)
   currentQuestionIdx Int           @default(0)
-  revealAnswer       Boolean       @default(false) // Показывать ли правильный ответ на доске
+  revealAnswer       Boolean       @default(false)
   status             SessionStatus @default(ACTIVE)
   createdAt          DateTime      @default(now())
   responses          Response[]
 
   @@index([status])
+  @@index([teacherId])
 }
 
 model Response {
@@ -91,7 +115,6 @@ model Response {
   isCorrect  Boolean
   scannedAt  DateTime     @updatedAt
 
-  // Защита от дублей при повторном попадании карточки в кадр
   @@unique([sessionId, questionId, studentId])
   @@index([sessionId, questionId])
 }
