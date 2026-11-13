@@ -274,9 +274,11 @@ function ScanContent() {
     currentQuestionIdx?: number;
     revealAnswer?: boolean;
     reset?: boolean;
+    resetQuestionId?: string;
   }) {
     if (!code) return;
     stopCamera();
+    pendingBatchRef.current.clear();
     await fetch(`/api/sessions/${code}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -314,10 +316,13 @@ function ScanContent() {
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => updateSession({ reset: true })}
-            className="px-3 py-1.5 rounded-lg bg-rose-900/60 hover:bg-rose-800 text-rose-200 text-xs font-medium"
+            disabled={!currentQuestion}
+            onClick={() =>
+              currentQuestion && updateSession({ resetQuestionId: currentQuestion.id })
+            }
+            className="px-3 py-1.5 rounded-lg bg-rose-900/60 hover:bg-rose-800 text-rose-200 text-xs font-medium disabled:opacity-40"
           >
-            Сбросить
+            Сбросить вопрос
           </button>
           <Link
             href={`/report/${code}`}

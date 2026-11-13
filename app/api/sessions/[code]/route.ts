@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 type RouteContext = { params: Promise<{ code: string }> };
 
 export async function GET(req: NextRequest, { params }: RouteContext) {
@@ -113,14 +115,24 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       dataToUpdate.status = body.status;
     }
 
+    if (typeof body.resetQuestionId === "string") {
+      await prisma.response.deleteMany({
+        where: {
+          sessionId: session.id,
+          questionId: body.resetQuestionId,
+        },
+      });
+      dataToUpdate.revealAnswer = false;
+    }
+
     if (body.reset === true) {
-          await prisma.response.deleteMany({
-            where: { sessionId: session.id },
-          });
-          dataToUpdate.currentQuestionIdx = 0;
-          dataToUpdate.revealAnswer = false;
-          dataToUpdate.status = "ACTIVE";
-        }
+      await prisma.response.deleteMany({
+        where: { sessionId: session.id },
+      });
+      dataToUpdate.currentQuestionIdx = 0;
+      dataToUpdate.revealAnswer = false;
+      dataToUpdate.status = "ACTIVE";
+    }
 
     const updated = await prisma.session.update({
       where: { code },
