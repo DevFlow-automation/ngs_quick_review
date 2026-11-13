@@ -360,7 +360,21 @@ export default function HomePage() {
     setStatusMsg(`Класс ${data.name} создан (${data.students.length} уч.)`);
     loadAll(currentTeacher?.id);
   }
-
+  async function handleDeleteClass(id: string) {
+      if (!currentTeacher) return;
+      setStatusMsg(null);
+      const res = await fetch(`/api/classes/${id}?teacherId=${currentTeacher.id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatusMsg(data.error || "Не удалось удалить класс");
+        return;
+      }
+      if (selectedClassId === id) setSelectedClassId("");
+      setStatusMsg("Класс удалён");
+      loadAll(currentTeacher.id);
+    }
   const isAdmin = currentTeacher?.role === "ADMIN";
   const selectedQuizObj = quizzes.find((q) => q.id === selectedQuizId);
   const canDeleteSelectedQuiz =
@@ -874,6 +888,7 @@ export default function HomePage() {
                 >
                   Создать класс и раздать номера карточек
                 </button>
+
               </form>
             ) : (
               <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm h-fit text-sm text-slate-600">
@@ -887,6 +902,15 @@ export default function HomePage() {
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="font-bold text-lg">{c.name}</h3>
                     <span className="text-xs text-slate-500">{c.students.length} учеников</span>
+                    {isAdmin && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteClass(c.id)}
+                                              className="text-xs text-rose-600 hover:underline font-medium"
+                                            >
+                                              Удалить
+                                            </button>
+                                          )}
                   </div>
                   <div className="grid grid-cols-2 gap-1.5 text-xs">
                     {c.students.map((st) => (
