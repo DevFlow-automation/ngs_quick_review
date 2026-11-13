@@ -19,10 +19,28 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, students } = body as { name?: string; students?: string[] };
+    const { name, students, teacherId } = body as {
+      name?: string;
+      students?: string[];
+      teacherId?: string;
+    };
+
+    if (!teacherId) {
+      return NextResponse.json({ error: "Войдите как администратор" }, { status: 401 });
+    }
+    const actor = await prisma.teacher.findUnique({ where: { id: teacherId } });
+    if (!actor || actor.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Добавлять классы может только администратор" },
+        { status: 403 }
+      );
+    }
 
     if (!name?.trim()) {
-      return NextResponse.json({ error: "Укажите название класса (например, 7-Б)" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Укажите название класса (например, 7-Б)" },
+        { status: 400 }
+      );
     }
 
     const cleanNames = (Array.isArray(students) ? students : [])

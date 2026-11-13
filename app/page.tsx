@@ -27,6 +27,7 @@ interface QuizItem {
   title: string;
   subject: string | null;
   isShared: boolean;
+  teacherId: string | null;
   teacher: { id: string; fullName: string } | null;
   _count: { questions: number };
 }
@@ -35,6 +36,7 @@ interface SessionItem {
   id: string;
   code: string;
   status: "ACTIVE" | "FINISHED";
+  teacherId: string | null;
   createdAt: string;
   class: { name: string };
   quiz: { title: string; subject: string | null };
@@ -62,7 +64,6 @@ function emptyQuestion(): DraftQuestion {
   };
 }
 
-// Парсер текста из Word / Telegram в массив вопросов
 function parseBulkQuestions(raw: string): DraftQuestion[] {
   const blocks = raw
     .trim()
@@ -134,44 +135,47 @@ export default function HomePage() {
   const [createdSessionCode, setCreatedSessionCode] = useState<string | null>(null);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
-  // Конструктор квиза
   const [quizTitle, setQuizTitle] = useState("");
   const [quizSubject, setQuizSubject] = useState("");
   const [quizShared, setQuizShared] = useState(true);
   const [bulkText, setBulkText] = useState("");
   const [questions, setQuestions] = useState<DraftQuestion[]>([emptyQuestion()]);
 
-  // Новый класс
   const [newClassName, setNewClassName] = useState("");
   const [newClassStudents, setNewClassStudents] = useState("");
 
-  const loadAll = useCallback(async (teacherId?: string) => {
-    const [tRes, cRes, qRes, sRes] = await Promise.all([
-      fetch("/api/teachers", { cache: "no-store" }),
-      fetch("/api/classes", { cache: "no-store" }),
-      fetch(`/api/quizzes${teacherId ? `?teacherId=${teacherId}` : ""}`, { cache: "no-store" }),
-      fetch("/api/sessions", { cache: "no-store" }),
-    ]);
+  const loadAll = useCallback(
+    async (teacherId?: string) => {
+      const [tRes, cRes, qRes, sRes] = await Promise.all([
+        fetch("/api/teachers", { cache: "no-store" }),
+        fetch("/api/classes", { cache: "no-store" }),
+        fetch(`/api/quizzes${teacherId ? `?teacherId=${teacherId}` : ""}`, {
+          cache: "no-store",
+        }),
+        fetch("/api/sessions", { cache: "no-store" }),
+      ]);
 
-    if (tRes.ok) {
-      const tData: Teacher[] = await tRes.json();
-      setTeachers(tData);
-      if (tData.length > 0 && !selectedTeacherId) setSelectedTeacherId(tData[0].id);
-    }
-    if (cRes.ok) {
-      const cData: ClassItem[] = await cRes.json();
-      setClasses(cData);
-      if (cData.length > 0 && !selectedClassId) setSelectedClassId(cData[0].id);
-    }
-    if (qRes.ok) {
-      const qData: QuizItem[] = await qRes.json();
-      setQuizzes(qData);
-      if (qData.length > 0 && !selectedQuizId) setSelectedQuizId(qData[0].id);
-    }
-    if (sRes.ok) {
-      setSessions(await sRes.json());
-    }
-  }, [selectedClassId, selectedQuizId, selectedTeacherId]);
+      if (tRes.ok) {
+        const tData: Teacher[] = await tRes.json();
+        setTeachers(tData);
+        if (tData.length > 0 && !selectedTeacherId) setSelectedTeacherId(tData[0].id);
+      }
+      if (cRes.ok) {
+        const cData: ClassItem[] = await cRes.json();
+        setClasses(cData);
+        if (cData.length > 0 && !selectedClassId) setSelectedClassId(cData[0].id);
+      }
+      if (qRes.ok) {
+        const qData: QuizItem[] = await qRes.json();
+        setQuizzes(qData);
+        if (qData.length > 0 && !selectedQuizId) setSelectedQuizId(qData[0].id);
+      }
+      if (sRes.ok) {
+        setSessions(await sRes.json());
+      }
+    },
+    [selectedClassId, selectedQuizId, selectedTeacherId]
+  );
 
   useEffect(() => {
     let saved: Teacher | null = null;
@@ -262,10 +266,42 @@ export default function HomePage() {
     loadAll(currentTeacher?.id);
   }
 
+  async function handleDeleteSession(code: string) {
+    if (!currentTeacher) return;
+    setStatusMsg(null);
+    const res = await fetch(`/api/sessions/${code}?teacherId=${currentTeacher.id}`, {
+      method: "DELETE",
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatusMsg(data.error || "Не удалось удалить опрос");
+      return;
+    }
+    if (createdSessionCode === code) setCreatedSessionCode(null);
+    loadAll(currentTeacher.id);
+  }
+
+  async function handleDeleteQuiz(id: string) {
+    if (!currentTeacher) return;
+    setStatusMsg(null);
+    const res = await fetch(`/api/quizzes/${id}?teacherId=${currentTeacher.id}`, {
+      method: "DELETE",
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatusMsg(data.error || "Не удалось удалить тест");
+      return;
+    }
+    if (selectedQuizId === id) setSelectedQuizId("");
+    loadAll(currentTeacher.id);
+  }
+
   function handleParseBulk() {
     const parsed = parseBulkQuestions(bulkText);
     if (parsed.length === 0) {
-      setStatusMsg("Не удалось распознать вопросы. Проверьте формат: 1 строка вопроса + 4 строки A) B) C) D).");
+      setStatusMsg(
+        "Не удалось распознать вопросы. Проверьте формат: 1 строка вопроса + 4 строки A) B) C) D)."
+      );
       return;
     }
     setStatusMsg(`Распознано вопросов: ${parsed.length}`);
@@ -307,7 +343,11 @@ export default function HomePage() {
     const res = await fetch("/api/classes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newClassName, students }),
+      body: JSON.stringify({
+        name: newClassName,
+        students,
+        teacherId: currentTeacher?.id,
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -320,6 +360,13 @@ export default function HomePage() {
     setStatusMsg(`Класс ${data.name} создан (${data.students.length} уч.)`);
     loadAll(currentTeacher?.id);
   }
+
+  const isAdmin = currentTeacher?.role === "ADMIN";
+  const selectedQuizObj = quizzes.find((q) => q.id === selectedQuizId);
+  const canDeleteSelectedQuiz =
+    Boolean(currentTeacher) &&
+    Boolean(selectedQuizObj) &&
+    (isAdmin || selectedQuizObj?.teacherId === currentTeacher?.id);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -364,10 +411,10 @@ export default function HomePage() {
               Классы
             </button>
             <Link
-                href="/cards"
-                className="px-3.5 py-1.5 rounded-lg font-medium text-slate-600 hover:text-slate-900 transition"
-                >
-                  Карточки
+              href="/cards"
+              className="px-3.5 py-1.5 rounded-lg font-medium text-slate-600 hover:text-slate-900 transition"
+            >
+              Карточки
             </Link>
           </nav>
 
@@ -375,7 +422,7 @@ export default function HomePage() {
             {currentTeacher ? (
               <div className="flex items-center gap-2.5">
                 <span className="px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-medium">
-                  {currentTeacher.fullName} ({currentTeacher.subject})
+                  {currentTeacher.fullName} ({isAdmin ? "Админ" : currentTeacher.subject})
                 </span>
                 <button
                   type="button"
@@ -393,7 +440,6 @@ export default function HomePage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
-        {/* Блок входа учителя */}
         {!currentTeacher && (
           <section className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
             {!showNewTeacher ? (
@@ -495,7 +541,6 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Вкладка 1: Запуск опроса */}
         {tab === "launch" && (
           <div className="space-y-6">
             <section className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
@@ -516,8 +561,19 @@ export default function HomePage() {
                   </select>
                 </label>
 
-                <label className="text-sm">
-                  <span className="block text-slate-600 mb-1">2. Выберите тест</span>
+                <div className="text-sm">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-slate-600">2. Выберите тест</span>
+                    {canDeleteSelectedQuiz && selectedQuizObj && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteQuiz(selectedQuizObj.id)}
+                        className="text-xs text-rose-600 hover:underline"
+                      >
+                        Удалить тест
+                      </button>
+                    )}
+                  </div>
                   <select
                     value={selectedQuizId}
                     onChange={(e) => setSelectedQuizId(e.target.value)}
@@ -529,7 +585,7 @@ export default function HomePage() {
                       </option>
                     ))}
                   </select>
-                </label>
+                </div>
 
                 <button
                   type="button"
@@ -569,59 +625,69 @@ export default function HomePage() {
               )}
             </section>
 
-            {/* История сессий */}
             <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-slate-200 font-semibold">
-                Недавние опросы
-              </div>
+              <div className="p-4 border-b border-slate-200 font-semibold">Недавние опросы</div>
               <div className="divide-y divide-slate-100">
-                {sessions.map((s) => (
-                  <div
-                    key={s.id}
-                    className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50"
-                  >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100">
-                          {s.code}
-                        </span>
-                        <span className="font-semibold text-slate-900">
-                          {s.class.name} — {s.quiz.title}
-                        </span>
+                {sessions.map((s) => {
+                  const canDelete =
+                    Boolean(currentTeacher) &&
+                    (isAdmin || s.teacherId === currentTeacher?.id);
+                  return (
+                    <div
+                      key={s.id}
+                      className="p-4 flex flex-wrap items-center justify-between gap-3 hover:bg-slate-50"
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100">
+                            {s.code}
+                          </span>
+                          <span className="font-semibold text-slate-900">
+                            {s.class.name} — {s.quiz.title}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          Ответов в базе: {s._count.responses}
+                          {s.teacher ? ` • ${s.teacher.fullName}` : ""}
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        Ответов в базе: {s._count.responses}
-                        {s.teacher ? ` • ${s.teacher.fullName}` : ""}
+                      <div className="flex flex-wrap gap-2 text-xs font-medium">
+                        <Link
+                          href={`/board/${s.code}`}
+                          className="px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-100"
+                        >
+                          Доска
+                        </Link>
+                        <Link
+                          href={`/scan/${s.code}`}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
+                        >
+                          Сканер
+                        </Link>
+                        <Link
+                          href={`/report/${s.code}`}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
+                        >
+                          Отчёт
+                        </Link>
+                        {canDelete && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSession(s.code)}
+                            className="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-600 hover:bg-rose-100"
+                          >
+                            Удалить
+                          </button>
+                        )}
                       </div>
                     </div>
-                    <div className="flex gap-2 text-xs font-medium">
-                      <Link
-                        href={`/board/${s.code}`}
-                        className="px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-100"
-                      >
-                        Доска
-                      </Link>
-                      <Link
-                        href={`/scan/${s.code}`}
-                        className="px-3 py-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
-                      >
-                        Сканер
-                      </Link>
-                      <Link
-                        href={`/report/${s.code}`}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
-                      >
-                        Отчёт
-                      </Link>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </section>
           </div>
         )}
 
-        {/* Вкладка 2: Создание теста */}
         {tab === "quiz" && (
           <form onSubmit={handleSaveQuiz} className="space-y-6">
             <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
@@ -658,7 +724,6 @@ export default function HomePage() {
               </label>
             </div>
 
-            {/* Умная вставка */}
             <div className="bg-indigo-50/70 rounded-2xl border border-indigo-200 p-5 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -684,7 +749,6 @@ export default function HomePage() {
               />
             </div>
 
-            {/* Список вопросов */}
             <div className="space-y-4">
               {questions.map((q, idx) => (
                 <div key={idx} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
@@ -773,44 +837,49 @@ export default function HomePage() {
           </form>
         )}
 
-        {/* Вкладка 3: Классы */}
         {tab === "classes" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <form
-              onSubmit={handleCreateClass}
-              className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4 h-fit"
-            >
-              <h2 className="font-semibold text-lg">Добавить класс (из Excel / списка)</h2>
-              <label className="block text-sm">
-                <span className="text-slate-600 block mb-1">Название класса</span>
-                <input
-                  required
-                  value={newClassName}
-                  onChange={(e) => setNewClassName(e.target.value)}
-                  placeholder="Например: 7-Б"
-                  className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="text-slate-600 block mb-1">
-                  Список учеников (каждый с новой строки — номера карточек присвоятся автоматически)
-                </span>
-                <textarea
-                  required
-                  rows={8}
-                  value={newClassStudents}
-                  onChange={(e) => setNewClassStudents(e.target.value)}
-                  placeholder={"Иван Иванов\nАлия Смирнова\nРустам Каримов"}
-                  className="w-full rounded-xl border border-slate-300 p-3 text-sm"
-                />
-              </label>
-              <button
-                type="submit"
-                className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm"
+            {isAdmin ? (
+              <form
+                onSubmit={handleCreateClass}
+                className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4 h-fit"
               >
-                Создать класс и раздать номера карточек
-              </button>
-            </form>
+                <h2 className="font-semibold text-lg">Добавить класс (из Excel / списка)</h2>
+                <label className="block text-sm">
+                  <span className="text-slate-600 block mb-1">Название класса</span>
+                  <input
+                    required
+                    value={newClassName}
+                    onChange={(e) => setNewClassName(e.target.value)}
+                    placeholder="Например: 7-Б"
+                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
+                  />
+                </label>
+                <label className="block text-sm">
+                  <span className="text-slate-600 block mb-1">
+                    Список учеников (каждый с новой строки — номера карточек присвоятся автоматически)
+                  </span>
+                  <textarea
+                    required
+                    rows={8}
+                    value={newClassStudents}
+                    onChange={(e) => setNewClassStudents(e.target.value)}
+                    placeholder={"Иван Иванов\nАлия Смирнова\nРустам Каримов"}
+                    className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm"
+                >
+                  Создать класс и раздать номера карточек
+                </button>
+              </form>
+            ) : (
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm h-fit text-sm text-slate-600">
+                Добавлять новые классы и учеников может только <strong>администратор</strong>. Войдите в профиль с правами администратора.
+              </div>
+            )}
 
             <div className="space-y-4">
               {classes.map((c) => (

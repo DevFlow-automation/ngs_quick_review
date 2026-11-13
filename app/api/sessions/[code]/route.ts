@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-
 type RouteContext = { params: Promise<{ code: string }> };
 
 export async function GET(req: NextRequest, { params }: RouteContext) {
@@ -142,5 +141,37 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
   } catch (error) {
     console.error("PATCH /api/sessions/[code] error:", error);
     return NextResponse.json({ error: "Ошибка обновления сессии" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest, { params }: RouteContext) {
+  try {
+    const { code } = await params;
+    const teacherId = req.nextUrl.searchParams.get("teacherId");
+
+    if (!teacherId) {
+      return NextResponse.json({ error: "Требуется авторизация" }, { status: 401 });
+    }
+
+    const [actor, session] = await Promise.all([
+      prisma.teacher.findUnique({ where: { id: teacherId } }),
+      prisma.session.findUnique({ where: { code } }),
+    ]);
+
+    if (!session) {
+      return NextResponse.json({ error: "Сессия не найдена" }, { status: 404 });
+    }
+    if (!actor || (actor.role !== "ADMIN" && session.teacherId !== actor.id)) {
+      return NextResponse.json(
+        { error: "Нет прав на удаление этого опроса" },
+        { status: 403 }
+      );
+    }
+
+    await prisma.session.delete({ where: { code } });
+    return NextResponse.json({ deleted: true });
+  } catch (error) {
+    console.error("DELETE /api/sessions/[code] error:", error);
+    return NextResponse.json({ error: "Ошибка удаления опроса" }, { status: 500 });
   }
 }
