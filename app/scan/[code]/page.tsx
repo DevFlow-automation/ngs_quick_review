@@ -239,7 +239,9 @@ function ScanContent() {
     }
   };
 
-  async function updateSession(payload: { currentQuestionIdx?: number; revealAnswer?: boolean }) {
+  async function updateSession(payload: { currentQuestionIdx?: number;
+      revealAnswer?: boolean;
+      reset?: boolean; }) {
     if (!code) return;
     stopCamera();
     await fetch(`/api/sessions/${code}`, {
@@ -276,6 +278,13 @@ function ScanContent() {
               : "Загрузка..."}
           </div>
         </div>
+        <button
+                    type="button"
+                    onClick={() => updateSession({ reset: true })}
+                    className="px-3 py-1.5 rounded-lg bg-rose-900/60 hover:bg-rose-800 text-rose-200 text-xs font-medium"
+                  >
+                    Сбросить
+                  </button>
         <Link
           href={`/report/${code}`}
           className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium"

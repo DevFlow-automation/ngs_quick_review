@@ -113,6 +113,15 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       dataToUpdate.status = body.status;
     }
 
+    if (body.reset === true) {
+          await prisma.response.deleteMany({
+            where: { sessionId: session.id },
+          });
+          dataToUpdate.currentQuestionIdx = 0;
+          dataToUpdate.revealAnswer = false;
+          dataToUpdate.status = "ACTIVE";
+        }
+
     const updated = await prisma.session.update({
       where: { code },
       data: dataToUpdate,
