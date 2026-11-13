@@ -71,6 +71,7 @@ function ScanContent() {
   const [arReady, setArReady] = useState(false);
   const [cvReady, setCvReady] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string>("");
   const [localScans, setLocalScans] = useState<Record<number, AnswerLetter>>({});
 
@@ -109,6 +110,22 @@ function ScanContent() {
     loadSession();
   }, [loadSession]);
 
+  useEffect(() => {
+    if (window.AR) {
+      setCvReady(true);
+      setArReady(true);
+      return;
+    }
+    const check = setInterval(() => {
+      if (window.AR) {
+        setCvReady(true);
+        setArReady(true);
+        clearInterval(check);
+      }
+    }, 200);
+    return () => clearInterval(check);
+  }, []);
+
   const currentQuestion = session?.questions[session.currentQuestionIdx] ?? null;
 
   useEffect(() => {
@@ -142,6 +159,9 @@ function ScanContent() {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setCameraActive(false);
   }, []);
 
@@ -150,109 +170,111 @@ function ScanContent() {
   }, [stopCamera]);
 
   const startCamera = async () => {
-      if (!window.AR) {
-        setStatusMsg("Детектор ещё загружается...");
-        return;
-      }
-      stopCamera();
-      setStatusMsg("");
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
-        });
-        streamRef.current = stream;
-        const video = videoRef.current;
-        if (!video) return;
+    if (isStarting) return;
+    if (!window.AR) {
+      setStatusMsg("Детектор ещё загружается...");
+      return;
+    }
 
-        video.srcObject = stream;
-        video.onloadedmetadata = async () => {
-          try {
-            await video.play();
-            setCameraActive(true);
-          } catch (e) {
-            if ((e as Error).name !== "AbortError") {
-              setStatusMsg(`Ошибка запуска видео: ${(e as Error).message}`);
-            }
+    setIsStarting(true);
+    stopCamera();
+    setStatusMsg("");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) return;
+
+      video.srcObject = stream;
+      await video.play();
+      setCameraActive(true);
+
+      const detector = new window.AR.Detector({
+        dictionaryName: "ARUCO_MIP_36h12",
+        maxHammingDistance: 4,
+      });
+
+      const studentByMarker = new Map(
+        (session?.students ?? []).map((s) => [s.markerId, s])
+      );
+
+      const tick = () => {
+        if (!streamRef.current || !canvasRef.current || !videoRef.current) return;
+        const vid = videoRef.current;
+        const cvs = canvasRef.current;
+        const ctx = cvs.getContext("2d", { willReadFrequently: true });
+        if (!ctx) return;
+
+        if (vid.readyState >= vid.HAVE_ENOUGH_DATA && vid.videoWidth > 0) {
+          if (cvs.width !== vid.videoWidth || cvs.height !== vid.videoHeight) {
+            cvs.width = vid.videoWidth;
+            cvs.height = vid.videoHeight;
           }
-        };
+          ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
+          const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
+          const markers = detector.detect(imgData);
 
-        const detector = new window.AR.Detector({
-          dictionaryName: "ARUCO_MIP_36h12",
-          maxHammingDistance: 4,
-        });
+          markers.forEach((m) => {
+            const answer = getAnswerFromCorners(m.corners);
+            const student = studentByMarker.get(m.id);
 
-        const studentByMarker = new Map(
-          (session?.students ?? []).map((s) => [s.markerId, s])
-        );
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = answer ? "#10b981" : "#f59e0b";
+            ctx.beginPath();
+            m.corners.forEach((c, i) => (i === 0 ? ctx.moveTo(c.x, c.y) : ctx.lineTo(c.x, c.y)));
+            ctx.closePath();
+            ctx.stroke();
 
-        const tick = () => {
-          if (!streamRef.current || !canvasRef.current || !videoRef.current) return;
-          const vid = videoRef.current;
-          const cvs = canvasRef.current;
-          const ctx = cvs.getContext("2d", { willReadFrequently: true });
-          if (!ctx) return;
+            const cx = m.corners.reduce((s, c) => s + c.x, 0) / 4;
+            const cy = m.corners.reduce((s, c) => s + c.y, 0) / 4;
+            const label = student
+              ? `#${m.id} ${student.fullName.split(" ")[0]} • ${answer || "?"}`
+              : `#${m.id} • ${answer || "?"}`;
 
-          if (vid.readyState >= vid.HAVE_ENOUGH_DATA) {
-            if (cvs.width !== vid.videoWidth || cvs.height !== vid.videoHeight) {
-              cvs.width = vid.videoWidth;
-              cvs.height = vid.videoHeight;
+            ctx.font = "bold 14px sans-serif";
+            const w = ctx.measureText(label).width;
+            ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+            ctx.fillRect(cx - w / 2 - 8, cy - 13, w + 16, 24);
+            ctx.fillStyle = "#fff";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, cx, cy - 1);
+
+            if (!answer || lockedRef.current.has(m.id)) return;
+
+            const win = stabilityRef.current.get(m.id) || [];
+            win.push(answer);
+            if (win.length > 4) win.shift();
+            stabilityRef.current.set(m.id, win);
+
+            if (win.length === 4 && win.every((a) => a === answer)) {
+              lockedRef.current.set(m.id, answer);
+              pendingBatchRef.current.set(m.id, answer);
+              setLocalScans((prev) => ({ ...prev, [m.id]: answer }));
             }
-            ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
-            const imgData = ctx.getImageData(0, 0, cvs.width, cvs.height);
-            const markers = detector.detect(imgData);
-
-            markers.forEach((m) => {
-              const answer = getAnswerFromCorners(m.corners);
-              const student = studentByMarker.get(m.id);
-
-              ctx.lineWidth = 3;
-              ctx.strokeStyle = answer ? "#10b981" : "#f59e0b";
-              ctx.beginPath();
-              m.corners.forEach((c, i) => (i === 0 ? ctx.moveTo(c.x, c.y) : ctx.lineTo(c.x, c.y)));
-              ctx.closePath();
-              ctx.stroke();
-
-              const cx = m.corners.reduce((s, c) => s + c.x, 0) / 4;
-              const cy = m.corners.reduce((s, c) => s + c.y, 0) / 4;
-              const label = student
-                ? `#${m.id} ${student.fullName.split(" ")[0]} • ${answer || "?"}`
-                : `#${m.id} • ${answer || "?"}`;
-
-              ctx.font = "bold 14px sans-serif";
-              const w = ctx.measureText(label).width;
-              ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
-              ctx.fillRect(cx - w / 2 - 8, cy - 13, w + 16, 24);
-              ctx.fillStyle = "#fff";
-              ctx.textAlign = "center";
-              ctx.textBaseline = "middle";
-              ctx.fillText(label, cx, cy - 1);
-
-              if (!answer || lockedRef.current.has(m.id)) return;
-
-              const win = stabilityRef.current.get(m.id) || [];
-              win.push(answer);
-              if (win.length > 4) win.shift();
-              stabilityRef.current.set(m.id, win);
-
-              if (win.length === 4 && win.every((a) => a === answer)) {
-                lockedRef.current.set(m.id, answer);
-                pendingBatchRef.current.set(m.id, answer);
-                setLocalScans((prev) => ({ ...prev, [m.id]: answer }));
-              }
-            });
-          }
-          rafRef.current = requestAnimationFrame(tick);
-        };
-        tick();
-      } catch (err) {
+          });
+        }
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
         setStatusMsg(`Ошибка камеры: ${(err as Error).message}`);
       }
-    };
+    } finally {
+      setIsStarting(false);
+    }
+  };
 
-  async function updateSession(payload: { currentQuestionIdx?: number;
-      revealAnswer?: boolean;
-      reset?: boolean; }) {
+  async function updateSession(payload: {
+    currentQuestionIdx?: number;
+    revealAnswer?: boolean;
+    reset?: boolean;
+  }) {
     if (!code) return;
     stopCamera();
     await fetch(`/api/sessions/${code}`, {
@@ -268,13 +290,13 @@ function ScanContent() {
       <Script
         src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/cv.js"
         strategy="afterInteractive"
-        onLoad={() => setCvReady(true)}
+        onReady={() => setCvReady(true)}
       />
       {cvReady && (
         <Script
           src="https://cdn.jsdelivr.net/npm/js-aruco2@2.0.0/src/aruco.js"
           strategy="afterInteractive"
-          onLoad={() => setArReady(true)}
+          onReady={() => setArReady(true)}
         />
       )}
 
@@ -289,19 +311,21 @@ function ScanContent() {
               : "Загрузка..."}
           </div>
         </div>
-        <button
-                    type="button"
-                    onClick={() => updateSession({ reset: true })}
-                    className="px-3 py-1.5 rounded-lg bg-rose-900/60 hover:bg-rose-800 text-rose-200 text-xs font-medium"
-                  >
-                    Сбросить
-                  </button>
-        <Link
-          href={`/report/${code}`}
-          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium"
-        >
-          Отчёт
-        </Link>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => updateSession({ reset: true })}
+            className="px-3 py-1.5 rounded-lg bg-rose-900/60 hover:bg-rose-800 text-rose-200 text-xs font-medium"
+          >
+            Сбросить
+          </button>
+          <Link
+            href={`/report/${code}`}
+            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium"
+          >
+            Отчёт
+          </Link>
+        </div>
       </header>
 
       {currentQuestion && (
@@ -338,19 +362,25 @@ function ScanContent() {
       )}
 
       <div className="bg-slate-900 rounded-2xl overflow-hidden border border-slate-800 relative min-h-[260px] flex items-center justify-center">
-              <video ref={videoRef} playsInline muted className="hidden" />
-              <canvas ref={canvasRef} className={cameraActive ? "w-full h-auto block" : "hidden"} />
-              {!cameraActive && (
-                <button
-                  type="button"
-                  disabled={!arReady}
-                  onClick={startCamera}
-                  className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm disabled:opacity-50"
-                >
-                  {arReady ? "Включить камеру" : "Загрузка детектора..."}
-                </button>
-              )}
-            </div>
+        <video
+          ref={videoRef}
+          playsInline
+          autoPlay
+          muted
+          className="absolute w-px h-px opacity-0 pointer-events-none"
+        />
+        <canvas ref={canvasRef} className={cameraActive ? "w-full h-auto block" : "hidden"} />
+        {!cameraActive && (
+          <button
+            type="button"
+            disabled={!arReady || isStarting}
+            onClick={startCamera}
+            className="px-5 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm disabled:opacity-50"
+          >
+            {!arReady ? "Загрузка детектора..." : isStarting ? "Запуск..." : "Включить камеру"}
+          </button>
+        )}
+      </div>
 
       {cameraActive && (
         <button
