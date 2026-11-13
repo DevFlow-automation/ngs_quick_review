@@ -145,6 +145,7 @@ export default function HomePage() {
   const [newClassStudents, setNewClassStudents] = useState("");
   const [bulkClassesText, setBulkClassesText] = useState("");
   const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
+  const [joinCode, setJoinCode] = useState("");
 
   const loadAll = useCallback(
     async (teacherId?: string) => {
@@ -509,6 +510,28 @@ export default function HomePage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+      <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const clean = joinCode.trim().toUpperCase();
+                  if (clean) window.location.href = `/board/${clean}`;
+                }}
+                className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm flex flex-wrap items-center gap-3"
+              >
+                <span className="text-sm font-medium text-slate-700">Быстрый вход на доску по коду:</span>
+                <input
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  placeholder="Например: 8A-01"
+                  className="w-40 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-mono uppercase"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-1.5 rounded-lg bg-slate-900 text-white text-sm font-medium"
+                >
+                  Открыть доску
+                </button>
+              </form>
         {!currentTeacher && (
           <section className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
             {!showNewTeacher ? (
