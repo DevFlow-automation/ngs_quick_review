@@ -143,6 +143,8 @@ export default function HomePage() {
 
   const [newClassName, setNewClassName] = useState("");
   const [newClassStudents, setNewClassStudents] = useState("");
+  const [bulkClassesText, setBulkClassesText] = useState("");
+  const [expandedClassId, setExpandedClassId] = useState<string | null>(null);
 
   const loadAll = useCallback(
     async (teacherId?: string) => {
@@ -360,21 +362,74 @@ export default function HomePage() {
     setStatusMsg(`Класс ${data.name} создан (${data.students.length} уч.)`);
     loadAll(currentTeacher?.id);
   }
-  async function handleDeleteClass(id: string) {
-      if (!currentTeacher) return;
-      setStatusMsg(null);
-      const res = await fetch(`/api/classes/${id}?teacherId=${currentTeacher.id}`, {
-        method: "DELETE",
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setStatusMsg(data.error || "Не удалось удалить класс");
-        return;
-      }
-      if (selectedClassId === id) setSelectedClassId("");
-      setStatusMsg("Класс удалён");
-      loadAll(currentTeacher.id);
+
+  async function handleBulkImportClasses(e: React.FormEvent) {
+    e.preventDefault();
+    if (!currentTeacher) return;
+    setStatusMsg(null);
+
+    const grouped = new Map<string, string[]>();
+    const lines = bulkClassesText
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    for (const line of lines) {
+      const parts = line
+        .split(/\t|;|,/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      if (parts.length < 2) continue;
+      const [className, fullName] = parts;
+      const list = grouped.get(className) || [];
+      list.push(fullName);
+      grouped.set(className, list);
     }
+
+    const classesPayload = Array.from(grouped.entries()).map(([name, students]) => ({
+      name,
+      students,
+    }));
+
+    if (classesPayload.length === 0) {
+      setStatusMsg("Не найдено строк формата: Класс [Tab] ФИО");
+      return;
+    }
+
+    const res = await fetch("/api/classes/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ teacherId: currentTeacher.id, classes: classesPayload }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatusMsg(data.error || "Ошибка импорта");
+      return;
+    }
+
+    setBulkClassesText("");
+    setStatusMsg(
+      `Импортировано классов: ${data.createdCount} (пропущено дублей: ${data.skippedCount})`
+    );
+    loadAll(currentTeacher.id);
+  }
+
+  async function handleDeleteClass(id: string) {
+    if (!currentTeacher) return;
+    setStatusMsg(null);
+    const res = await fetch(`/api/classes/${id}?teacherId=${currentTeacher.id}`, {
+      method: "DELETE",
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatusMsg(data.error || "Не удалось удалить класс");
+      return;
+    }
+    if (selectedClassId === id) setSelectedClassId("");
+    setStatusMsg("Класс удалён");
+    loadAll(currentTeacher.id);
+  }
+
   const isAdmin = currentTeacher?.role === "ADMIN";
   const selectedQuizObj = quizzes.find((q) => q.id === selectedQuizId);
   const canDeleteSelectedQuiz =
@@ -853,77 +908,117 @@ export default function HomePage() {
 
         {tab === "classes" && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {isAdmin ? (
-              <form
-                onSubmit={handleCreateClass}
-                className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4 h-fit"
-              >
-                <h2 className="font-semibold text-lg">Добавить класс (из Excel / списка)</h2>
-                <label className="block text-sm">
-                  <span className="text-slate-600 block mb-1">Название класса</span>
-                  <input
-                    required
-                    value={newClassName}
-                    onChange={(e) => setNewClassName(e.target.value)}
-                    placeholder="Например: 7-Б"
-                    className="w-full rounded-xl border border-slate-300 px-3 py-2"
-                  />
-                </label>
-                <label className="block text-sm">
-                  <span className="text-slate-600 block mb-1">
-                    Список учеников (каждый с новой строки — номера карточек присвоятся автоматически)
-                  </span>
-                  <textarea
-                    required
-                    rows={8}
-                    value={newClassStudents}
-                    onChange={(e) => setNewClassStudents(e.target.value)}
-                    placeholder={"Иван Иванов\nАлия Смирнова\nРустам Каримов"}
-                    className="w-full rounded-xl border border-slate-300 p-3 text-sm"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm"
-                >
-                  Создать класс и раздать номера карточек
-                </button>
+            <div className="space-y-6">
+              {isAdmin ? (
+                <>
+                  <form
+                    onSubmit={handleBulkImportClasses}
+                    className="bg-indigo-50/70 rounded-2xl border border-indigo-200 p-5 space-y-3"
+                  >
+                    <h2 className="font-semibold text-indigo-950">
+                      Массовый импорт всех классов из Excel
+                    </h2>
+                    <p className="text-xs text-indigo-700">
+                      Скопируйте из Excel 2 столбца: <strong>Класс</strong> и <strong>ФИО</strong> (через Tab или точку с запятой) — все классы создадутся за один раз.
+                    </p>
+                    <textarea
+                      required
+                      rows={6}
+                      value={bulkClassesText}
+                      onChange={(e) => setBulkClassesText(e.target.value)}
+                      placeholder={"2 А\tИванов Иван\n2 А\tСмирнова Алия\n2 Б\tКаримов Рустам"}
+                      className="w-full rounded-xl border border-indigo-200 bg-white p-3 text-xs font-mono"
+                    />
+                    <button
+                      type="submit"
+                      className="w-full py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm"
+                    >
+                      Импортировать все классы сразу
+                    </button>
+                  </form>
 
-              </form>
-            ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm h-fit text-sm text-slate-600">
-                Добавлять новые классы и учеников может только <strong>администратор</strong>. Войдите в профиль с правами администратора.
-              </div>
-            )}
-
-            <div className="space-y-4">
-              {classes.map((c) => (
-                <div key={c.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-bold text-lg">{c.name}</h3>
-                    <span className="text-xs text-slate-500">{c.students.length} учеников</span>
-                    {isAdmin && (
-                                            <button
-                                              type="button"
-                                              onClick={() => handleDeleteClass(c.id)}
-                                              className="text-xs text-rose-600 hover:underline font-medium"
-                                            >
-                                              Удалить
-                                            </button>
-                                          )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5 text-xs">
-                    {c.students.map((st) => (
-                      <div key={st.id} className="px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-100">
-                        <span className="font-mono font-bold text-indigo-600 mr-1.5">
-                          #{st.markerId}
-                        </span>
-                        <span>{st.fullName}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <form
+                    onSubmit={handleCreateClass}
+                    className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4"
+                  >
+                    <h2 className="font-semibold text-base">Добавить один класс</h2>
+                    <input
+                      required
+                      value={newClassName}
+                      onChange={(e) => setNewClassName(e.target.value)}
+                      placeholder="Название класса (например: 7-Б)"
+                      className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm"
+                    />
+                    <textarea
+                      required
+                      rows={4}
+                      value={newClassStudents}
+                      onChange={(e) => setNewClassStudents(e.target.value)}
+                      placeholder={"Иван Иванов\nАлия Смирнова"}
+                      className="w-full rounded-xl border border-slate-300 p-3 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      className="w-full py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-medium text-sm"
+                    >
+                      Создать класс
+                    </button>
+                  </form>
+                </>
+              ) : (
+                <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm text-sm text-slate-600">
+                  Добавлять новые классы и учеников может только <strong>администратор</strong>.
                 </div>
-              ))}
+              )}
+            </div>
+
+            <div className="space-y-2.5">
+              {classes.map((c) => {
+                const isOpen = expandedClassId === c.id;
+                return (
+                  <div key={c.id} className="bg-white rounded-2xl border border-slate-200 p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedClassId(isOpen ? null : c.id)}
+                        className="flex items-center gap-2.5 text-left font-bold text-base hover:text-indigo-600"
+                      >
+                        <span>{isOpen ? "▾" : "▸"}</span>
+                        <span>{c.name}</span>
+                        <span className="text-xs font-normal text-slate-500">
+                          ({c.students.length} уч.)
+                        </span>
+                      </button>
+
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClass(c.id)}
+                          className="text-xs text-rose-600 hover:underline font-medium"
+                        >
+                          Удалить
+                        </button>
+                      )}
+                    </div>
+
+                    {isOpen && (
+                      <div className="grid grid-cols-2 gap-1.5 text-xs mt-3 pt-3 border-t border-slate-100">
+                        {c.students.map((st) => (
+                          <div
+                            key={st.id}
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-100"
+                          >
+                            <span className="font-mono font-bold text-indigo-600 mr-1.5">
+                              #{st.markerId}
+                            </span>
+                            <span>{st.fullName}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
