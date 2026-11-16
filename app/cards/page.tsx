@@ -21,13 +21,43 @@ declare global {
   }
 }
 
+interface Student {
+  id: string;
+  fullName: string;
+  markerId: number;
+}
+
+interface ClassItem {
+  id: string;
+  name: string;
+  students: Student[];
+}
+
+interface CardItem {
+  id: number;
+  svg: string;
+  studentName?: string;
+  className?: string;
+}
+
 export default function CardsPage() {
   const [cvReady, setCvReady] = useState(false);
   const [arReady, setArReady] = useState(false);
+
+  const [classes, setClasses] = useState<ClassItem[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState("");
+
   const [startId, setStartId] = useState(1);
   const [endId, setEndId] = useState(10);
   const [layout, setLayout] = useState<"two" | "one">("two");
-  const [cards, setCards] = useState<Array<{ id: number; svg: string }>>([]);
+  const [cards, setCards] = useState<CardItem[]>([]);
+
+  useEffect(() => {
+    fetch("/api/classes", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data: ClassItem[]) => setClasses(data))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (window.AR?.Dictionary) {
@@ -49,15 +79,31 @@ export default function CardsPage() {
     if (!arReady || !window.AR?.Dictionary) return;
     const dict = new window.AR.Dictionary("ARUCO_MIP_36h12");
     const maxId = dict.codeList.length - 1;
+
+    const selectedClass = classes.find((c) => c.id === selectedClassId);
+
+    if (selectedClass) {
+      const list: CardItem[] = selectedClass.students
+        .filter((st) => st.markerId >= 0 && st.markerId <= maxId)
+        .map((st) => ({
+          id: st.markerId,
+          svg: dict.generateSVG(st.markerId),
+          studentName: st.fullName,
+          className: selectedClass.name,
+        }));
+      setCards(list);
+      return;
+    }
+
     const from = Math.max(0, Math.min(maxId, startId));
     const to = Math.max(from, Math.min(maxId, Math.min(from + 59, endId)));
 
-    const list: Array<{ id: number; svg: string }> = [];
+    const list: CardItem[] = [];
     for (let id = from; id <= to; id++) {
       list.push({ id, svg: dict.generateSVG(id) });
     }
     setCards(list);
-  }, [arReady, startId, endId]);
+  }, [arReady, classes, selectedClassId, startId, endId]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -110,28 +156,46 @@ export default function CardsPage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-sm">
-            <label className="flex items-center gap-1.5">
-              <span className="text-slate-600">С ID:</span>
-              <input
-                type="number"
-                min={0}
-                max={249}
-                value={startId}
-                onChange={(e) => setStartId(Number(e.target.value) || 0)}
-                className="w-20 rounded-lg border border-slate-300 px-2.5 py-1.5"
-              />
-            </label>
-            <label className="flex items-center gap-1.5">
-              <span className="text-slate-600">По ID:</span>
-              <input
-                type="number"
-                min={0}
-                max={249}
-                value={endId}
-                onChange={(e) => setEndId(Number(e.target.value) || 0)}
-                className="w-20 rounded-lg border border-slate-300 px-2.5 py-1.5"
-              />
-            </label>
+            <select
+              value={selectedClassId}
+              onChange={(e) => setSelectedClassId(e.target.value)}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 bg-white font-medium"
+            >
+              <option value="">Без класса (по номерам ID)</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>
+                  Класс {c.name} ({c.students.length} уч.)
+                </option>
+              ))}
+            </select>
+
+            {!selectedClassId && (
+              <>
+                <label className="flex items-center gap-1.5">
+                  <span className="text-slate-600">С ID:</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={249}
+                    value={startId}
+                    onChange={(e) => setStartId(Number(e.target.value) || 0)}
+                    className="w-20 rounded-lg border border-slate-300 px-2.5 py-1.5"
+                  />
+                </label>
+                <label className="flex items-center gap-1.5">
+                  <span className="text-slate-600">По ID:</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={249}
+                    value={endId}
+                    onChange={(e) => setEndId(Number(e.target.value) || 0)}
+                    className="w-20 rounded-lg border border-slate-300 px-2.5 py-1.5"
+                  />
+                </label>
+              </>
+            )}
+
             <select
               value={layout}
               onChange={(e) => setLayout(e.target.value as "two" | "one")}
@@ -140,6 +204,7 @@ export default function CardsPage() {
               <option value="two">2 на лист A4</option>
               <option value="one">1 крупная на лист A4</option>
             </select>
+
             <button
               type="button"
               disabled={cards.length === 0}
@@ -154,11 +219,13 @@ export default function CardsPage() {
 
       <main className="max-w-5xl mx-auto p-6 print:p-0">
         <div className="print:hidden mb-4 text-xs text-slate-600 bg-white border border-slate-200 rounded-xl px-4 py-2.5">
-          Печатайте на <strong>матовой</strong> бумаге (без глянцевой ламинации, чтобы не было бликов). Один комплект карточек #1–#40 подходит для всех классов школы.
+          Печатайте на <strong>матовой</strong> бумаге (без глянцевой ламинации, чтобы не было бликов). Если выбрать класс — на каждой карточке сразу пропечатается ФИО ученика.
         </div>
 
         {!arReady ? (
           <div className="py-20 text-center text-slate-500">Загрузка генератора...</div>
+        ) : cards.length === 0 ? (
+          <div className="py-20 text-center text-slate-500">В выбранном классе пока нет учеников.</div>
         ) : (
           <div
             className={`grid gap-6 print:gap-4 ${
@@ -167,17 +234,29 @@ export default function CardsPage() {
           >
             {cards.map((card) => (
               <div
-                key={card.id}
+                key={`${card.className || "num"}-${card.id}`}
                 className="print-card bg-white rounded-2xl border border-slate-200 p-6 flex flex-col items-center justify-center relative aspect-square max-w-[400px] w-full mx-auto shadow-sm"
               >
-                <span className="absolute top-2.5 left-3.5 text-xs font-mono text-slate-400">
-                  #{card.id}
-                </span>
-                <span className="absolute top-2.5 right-3.5 text-xs font-mono text-slate-400">
-                  #{card.id}
-                </span>
+                {card.studentName ? (
+                  <div className="absolute top-2.5 left-3.5 right-3.5 flex items-center justify-between gap-2 text-xs">
+                    <span className="font-semibold text-slate-700 truncate">
+                      <span className="font-mono text-indigo-600 mr-1">#{card.id}</span>
+                      {card.studentName}
+                    </span>
+                    <span className="font-mono text-slate-400 shrink-0">{card.className}</span>
+                  </div>
+                ) : (
+                  <>
+                    <span className="absolute top-2.5 left-3.5 text-xs font-mono text-slate-400">
+                      #{card.id}
+                    </span>
+                    <span className="absolute top-2.5 right-3.5 text-xs font-mono text-slate-400">
+                      #{card.id}
+                    </span>
+                  </>
+                )}
 
-                <div className="text-2xl font-bold text-slate-800 mb-2 select-none">A</div>
+                <div className="text-2xl font-bold text-slate-800 mb-2 mt-3 select-none">A</div>
 
                 <div className="flex items-center justify-center w-full gap-2">
                   <div className="text-2xl font-bold text-slate-800 -rotate-90 select-none">D</div>
